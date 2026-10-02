@@ -4,12 +4,31 @@ local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local MAX_PLAYERS = 12
  
--- ScreenGui
+-- Xóa HUD cũ nếu chạy script nhiều lần
+local function getParent()
+    -- Ưu tiên gethui / CoreGui để nằm trên các UI khác, rồi mới tới PlayerGui
+    local ok, ui = pcall(function()
+        return (gethui and gethui()) or game:GetService("CoreGui")
+    end)
+    if ok and ui then
+        return ui
+    end
+    return LocalPlayer:WaitForChild("PlayerGui")
+end
+ 
+local parent = getParent()
+local old = parent:FindFirstChild("InfoHUD")
+if old then old:Destroy() end
+ 
+-- ScreenGui (hiển thị đè lên mọi thứ)
 local gui = Instance.new("ScreenGui")
 gui.Name = "InfoHUD"
 gui.ResetOnSpawn = false
-gui.DisplayOrder = 100
-gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+gui.IgnoreGuiInset = true
+gui.DisplayOrder = 2147483647
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+pcall(function() gui.OnTopOfCoreBlur = true end)
+gui.Parent = parent
  
 -- Hàm tạo chữ (không nền, không viền khung)
 local function makeLabel(y, size)
@@ -22,6 +41,7 @@ local function makeLabel(y, size)
     l.TextXAlignment = Enum.TextXAlignment.Left
     l.TextStrokeColor3 = Color3.new(0, 0, 0)
     l.TextStrokeTransparency = 0.2
+    l.ZIndex = 1000
     l.Text = ""
     l.Parent = gui
     return l
@@ -53,7 +73,6 @@ Players.PlayerRemoving:Connect(function() task.wait(0.1) updatePlayers() end)
 -- FPS + màu cầu vồng
 local frames = 0
 local last = os.clock()
-local fps = 0
  
 RunService.RenderStepped:Connect(function()
     frames += 1
@@ -62,8 +81,7 @@ RunService.RenderStepped:Connect(function()
  
     local now = os.clock()
     if now - last >= 1 then
-        fps = math.floor(frames / (now - last))
-        fpsLabel.Text = "FPS: " .. fps
+        fpsLabel.Text = "FPS: " .. math.floor(frames / (now - last))
         frames = 0
         last = now
     end
