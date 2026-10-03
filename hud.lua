@@ -91,24 +91,32 @@ local function getMoonId()
     return string.match(tostring(sky.MoonTextureId), "%d+")
 end
  
--- Đo tốc độ trôi của giờ trong game (giờ game / giây thực)
-local prevClock, prevReal
+-- Đo tốc độ trôi giờ game: cộng dồn từ đầu nên rất ổn định (không dao động theo từng giây)
+local prevClock
+local accHours, startReal = 0, nil
 local rate -- giờ game mỗi giây thực
  
 local function sampleRate()
     local clock = Lighting.ClockTime
     local real = os.clock()
+ 
     if prevClock then
-        local dt = real - prevReal
         local dh = (clock - prevClock) % 24
-        if dt > 0.2 and dh < 12 then
-            local inst = dh / dt
-            if inst > 1e-4 and inst < 0.5 then
-                rate = rate and (rate * 0.7 + inst * 0.3) or inst
-            end
+        if dh < 12 then
+            accHours += dh
+        else
+            -- giờ game nhảy bất thường -> đo lại từ đầu
+            accHours, startReal, rate = 0, real, nil
         end
     end
-    prevClock, prevReal = clock, real
+    prevClock = clock
+    startReal = startReal or real
+ 
+    local secs = real - startReal
+    if secs >= 5 and accHours > 0 then
+        local r = accHours / secs
+        if r > 1e-4 and r < 0.5 then rate = r end
+    end
 end
  
 local function isNight(clock)
@@ -116,13 +124,18 @@ local function isNight(clock)
 end
  
 local function formatTime(sec)
-    sec = math.max(0, math.floor(sec))
+    sec = math.max(0, math.floor(sec + 0.5))
     return string.format("%02d:%02d", sec // 60, sec % 60)
 end
+ 
+-- Mốc thời gian thực mà trăng hết, được làm mượt để số chỉ giảm đều
+local endReal
+local lastShown
  
 local function updateMoon()
     local id = getMoonId()
     local clock = Lighting.ClockTime
+    local now = os.clock()
     sampleRate()
  
     if DEBUG_MOON then
@@ -133,26 +146,45 @@ local function updateMoon()
     isFullMoon = id ~= nil and FULL_MOON_IDS[id] == true
  
     if not isFullMoon then
+        endReal, lastShown = nil, nil
         moonLabel.Text = "Trăng: thường"
         moonLabel.TextColor3 = Color3.fromRGB(190, 190, 205)
         return
     end
  
     if not isNight(clock) then
+        endReal, lastShown = nil, nil
         moonLabel.Text = "Trăng tròn: đã hết đêm"
-    elseif not rate then
-        moonLabel.Text = "Trăng tròn! Còn: đang đo..."
-    else
-        local remainHours = (NIGHT_END - clock) % 24
-        moonLabel.Text = "Trăng tròn! Còn ~" .. formatTime(remainHours / rate)
+        return
     end
+ 
+    if not rate then
+        moonLabel.Text = "Trăng tròn! Còn: đang đo..."
+        return
+    end
+ 
+    -- Ước lượng mới từ giờ game, rồi trộn nhẹ vào mốc cũ thay vì thay hẳn
+    local est = now + ((NIGHT_END - clock) % 24) / rate
+    if not endReal or math.abs(est - endReal) > 8 then
+        endReal, lastShown = est, nil          -- lệch lớn (đổi đêm, lag...) -> đặt lại
+    else
+        endReal = endReal + (est - endReal) * 0.1
+    end
+ 
+    local remain = endReal - now
+    if lastShown and remain > lastShown then
+        remain = lastShown                      -- không cho số nhảy ngược lên
+    end
+    lastShown = remain
+ 
+    moonLabel.Text = "Trăng tròn! Còn ~" .. formatTime(remain)
 end
  
 updateMoon()
 task.spawn(function()
     while gui.Parent do
         pcall(updateMoon)
-        task.wait(1)
+        task.wait(0.5)
     end
 end)
  
@@ -178,4 +210,3 @@ RunService.RenderStepped:Connect(function()
         last = t
     end
 end)
- 
