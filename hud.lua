@@ -1,5 +1,6 @@
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
+local Stats = game:GetService("Stats")
  
 local LocalPlayer = Players.LocalPlayer
 local MAX_PLAYERS = 12
@@ -31,10 +32,10 @@ pcall(function() gui.OnTopOfCoreBlur = true end)
 gui.Parent = parent
  
 -- Hàm tạo chữ (không nền, không viền khung)
-local function makeLabel(y, size)
+local function makeLabel(y, size, x)
     local l = Instance.new("TextLabel")
     l.BackgroundTransparency = 1
-    l.Position = UDim2.new(0, 16, 0, y)
+    l.Position = UDim2.new(0, x or 16, 0, y)
     l.Size = UDim2.new(0, 320, 0, size + 6)
     l.Font = Enum.Font.FredokaOne
     l.TextSize = size
@@ -49,6 +50,7 @@ end
  
 local fpsLabel = makeLabel(14, 44)
 local playersLabel = makeLabel(66, 34)
+local pingLabel = makeLabel(24, 34, 250) -- nằm bên phải FPS (đổi số 250 để dời ngang)
  
 -- Màu số người theo độ đông
 local function getColor(count)
@@ -69,6 +71,42 @@ end
 updatePlayers()
 Players.PlayerAdded:Connect(function() task.wait(0.1) updatePlayers() end)
 Players.PlayerRemoving:Connect(function() task.wait(0.1) updatePlayers() end)
+ 
+-- Ping (độ trễ mạng, đơn vị ms)
+local function getPing()
+    local ok, v = pcall(function()
+        return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
+    end)
+    if ok and v then return v end
+ 
+    local ok2, p = pcall(function()
+        return LocalPlayer:GetNetworkPing() * 2000
+    end)
+    if ok2 then return p end
+    return nil
+end
+ 
+local function getPingColor(ms)
+    if ms < 80 then
+        return Color3.fromRGB(85, 230, 130)   -- mạng tốt
+    elseif ms < 150 then
+        return Color3.fromRGB(255, 200, 60)   -- tạm được
+    end
+    return Color3.fromRGB(255, 85, 85)        -- lag
+end
+ 
+task.spawn(function()
+    while gui.Parent do
+        local ms = getPing()
+        if ms then
+            pingLabel.Text = string.format("Ping: %dms", math.floor(ms + 0.5))
+            pingLabel.TextColor3 = getPingColor(ms)
+        else
+            pingLabel.Text = "Ping: --"
+        end
+        task.wait(1)
+    end
+end)
  
 -- FPS + màu cầu vồng
 local frames = 0
