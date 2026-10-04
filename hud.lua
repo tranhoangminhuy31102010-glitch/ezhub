@@ -50,7 +50,12 @@ end
  
 local fpsLabel = makeLabel(14, 44)
 local playersLabel = makeLabel(66, 34)
-local pingLabel = makeLabel(24, 34, 250) -- nằm bên phải FPS (đổi số 250 để dời ngang)
+local pingLabel = makeLabel(24, 34)
+local PING_GAP = 18 -- khoảng cách giữa FPS và Ping (px)
+ 
+local function repositionPing()
+    pingLabel.Position = UDim2.new(0, 16 + fpsLabel.TextBounds.X + PING_GAP, 0, 24)
+end
  
 -- Màu số người theo độ đông
 local function getColor(count)
@@ -73,16 +78,33 @@ Players.PlayerAdded:Connect(function() task.wait(0.1) updatePlayers() end)
 Players.PlayerRemoving:Connect(function() task.wait(0.1) updatePlayers() end)
  
 -- Ping (độ trễ mạng, đơn vị ms)
+local DEBUG_PING = false   -- true: in các giá trị ping gốc ra console (F9) để kiểm tra
+local MAX_SANE_PING = 3000 -- giá trị lớn hơn mức này coi là sai, bỏ qua
+ 
+local function isSane(v)
+    return type(v) == "number" and v >= 0 and v <= MAX_SANE_PING
+end
+ 
 local function getPing()
+    local dataPing, netPing
+ 
     local ok, v = pcall(function()
         return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
     end)
-    if ok and v then return v end
+    if ok then dataPing = v end
  
     local ok2, p = pcall(function()
         return LocalPlayer:GetNetworkPing() * 2000
     end)
-    if ok2 then return p end
+    if ok2 then netPing = p end
+ 
+    if DEBUG_PING then
+        print("Data Ping:", dataPing, "| GetNetworkPing x2000:", netPing)
+    end
+ 
+    -- Ưu tiên giá trị hợp lý, giá trị phi lý (vd 16621ms) thì bỏ
+    if isSane(dataPing) then return dataPing end
+    if isSane(netPing) then return netPing end
     return nil
 end
  
@@ -95,16 +117,34 @@ local function getPingColor(ms)
     return Color3.fromRGB(255, 85, 85)        -- lag
 end
  
+local SAMPLE_COUNT = 5
+local samples = {}
+ 
+local function median(list)
+    local copy = table.clone(list)
+    table.sort(copy)
+    local n = #copy
+    if n % 2 == 1 then
+        return copy[(n + 1) // 2]
+    end
+    return (copy[n // 2] + copy[n // 2 + 1]) / 2
+end
+ 
 task.spawn(function()
     while gui.Parent do
         local ms = getPing()
         if ms then
-            pingLabel.Text = string.format("Ping: %dms", math.floor(ms + 0.5))
-            pingLabel.TextColor3 = getPingColor(ms)
+            table.insert(samples, ms)
+            if #samples > SAMPLE_COUNT then table.remove(samples, 1) end
+ 
+            local value = median(samples) -- trung vị: loại bỏ các cú giật đột ngột
+            pingLabel.Text = string.format("Ping: %dms", math.floor(value + 0.5))
+            pingLabel.TextColor3 = getPingColor(value)
         else
             pingLabel.Text = "Ping: --"
         end
-        task.wait(1)
+        repositionPing()
+        task.wait(0.5)
     end
 end)
  
@@ -120,8 +160,8 @@ RunService.RenderStepped:Connect(function()
  
     if t - last >= 1 then
         fpsLabel.Text = "FPS: " .. math.floor(frames / (t - last))
+        repositionPing()
         frames = 0
         last = t
     end
 end)
- 
