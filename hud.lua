@@ -1,167 +1,243 @@
-local RunService = game:GetService("RunService")
-local Players = game:GetService("Players")
-local Stats = game:GetService("Stats")
+-- ============================================================
+--  InfoHUD + Full Map Grayscale  |  Blox Fruits
+-- ============================================================
  
+-- ╔══════════════════════════════════════════════════════════╗
+--  ★  CONFIG  –  Chỉnh tại đây, không cần đụng code bên dưới
+-- ╠══════════════════════════════════════════════════════════╣
+local CONFIG = {
+    SHOW_FPS      = true,   -- Hiển thị FPS (màu cầu vồng)
+    SHOW_PLAYERS  = true,   -- Hiển thị số người chơi trong server
+    SHOW_PING     = true,   -- Hiển thị độ trễ mạng (ms)
+    FIX_LAG       = true,   -- Giảm lag: tắt hiệu ứng, đổ bóng, grayscale map
+}
+-- ╚══════════════════════════════════════════════════════════╝
+ 
+-- ── Cài đặt nâng cao (thường không cần chỉnh) ──────────────
+local MAX_PLAYERS   = 12      -- Số slot server tối đa
+local MAX_SANE_PING = 3000    -- Bỏ qua giá trị ping vô lý hơn mức này (ms)
+local PING_SAMPLES  = 5       -- Số mẫu dùng để tính trung vị ping
+local DEBUG_PING    = false   -- true → in giá trị ping gốc ra console (F9)
+-- ────────────────────────────────────────────────────────────
+ 
+ 
+local RunService  = game:GetService("RunService")
+local Players     = game:GetService("Players")
+local Stats       = game:GetService("Stats")
+local Lighting    = game:GetService("Lighting")
+local Workspace   = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
-local MAX_PLAYERS = 12
  
--- Xóa HUD cũ nếu chạy script nhiều lần
-local function getParent()
-    -- Ưu tiên gethui / CoreGui để nằm trên các UI khác, rồi mới tới PlayerGui
-    local ok, ui = pcall(function()
-        return (gethui and gethui()) or game:GetService("CoreGui")
-    end)
-    if ok and ui then
-        return ui
+ 
+-- ══════════════════════════════════════════════════════════
+--  FIX LAG
+--  Tắt hiệu ứng hạt, lửa, khói, bóng đổ và ánh sáng môi
+--  trường – giúp client render ít thứ hơn, FPS ổn định hơn.
+-- ══════════════════════════════════════════════════════════
+if CONFIG.FIX_LAG then
+ 
+    -- Tắt bóng đổ & ánh sáng môi trường
+    Lighting.GlobalShadows            = false
+    Lighting.EnvironmentDiffuseScale  = 0
+    Lighting.EnvironmentSpecularScale = 0
+ 
+    -- Bộ lọc đen trắng (giảm shader load)
+    local gray = Lighting:FindFirstChild("FullMapGrayscale")
+    if not gray then
+        gray        = Instance.new("ColorCorrectionEffect")
+        gray.Name   = "FullMapGrayscale"
+        gray.Parent = Lighting
     end
-    return LocalPlayer:WaitForChild("PlayerGui")
-end
+    gray.Saturation = -1
+    gray.Contrast   = 0
+    gray.Brightness = 0
  
-local parent = getParent()
-local old = parent:FindFirstChild("InfoHUD")
-if old then old:Destroy() end
- 
--- ScreenGui (hiển thị đè lên mọi thứ)
-local gui = Instance.new("ScreenGui")
-gui.Name = "InfoHUD"
-gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = true
-gui.DisplayOrder = 2147483647
-gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-pcall(function() gui.OnTopOfCoreBlur = true end)
-gui.Parent = parent
- 
--- Hàm tạo chữ (không nền, không viền khung)
-local function makeLabel(y, size, x)
-    local l = Instance.new("TextLabel")
-    l.BackgroundTransparency = 1
-    l.Position = UDim2.new(0, x or 16, 0, y)
-    l.Size = UDim2.new(0, 320, 0, size + 6)
-    l.Font = Enum.Font.FredokaOne
-    l.TextSize = size
-    l.TextXAlignment = Enum.TextXAlignment.Left
-    l.TextStrokeColor3 = Color3.new(0, 0, 0)
-    l.TextStrokeTransparency = 0.2
-    l.ZIndex = 1000
-    l.Text = ""
-    l.Parent = gui
-    return l
-end
- 
-local fpsLabel = makeLabel(14, 44)
-local playersLabel = makeLabel(66, 34)
-local pingLabel = makeLabel(24, 34)
-local PING_GAP = 18 -- khoảng cách giữa FPS và Ping (px)
- 
-local function repositionPing()
-    pingLabel.Position = UDim2.new(0, 16 + fpsLabel.TextBounds.X + PING_GAP, 0, 24)
-end
- 
--- Màu số người theo độ đông
-local function getColor(count)
-    if count >= MAX_PLAYERS then
-        return Color3.fromRGB(255, 85, 85)   -- đầy
-    elseif count >= 9 then
-        return Color3.fromRGB(255, 200, 60)  -- khá đông
-    end
-    return Color3.fromRGB(85, 230, 130)      -- còn chỗ
-end
- 
-local function updatePlayers()
-    local count = #Players:GetPlayers()
-    playersLabel.Text = string.format("Người: %d/%d", count, MAX_PLAYERS)
-    playersLabel.TextColor3 = getColor(count)
-end
- 
-updatePlayers()
-Players.PlayerAdded:Connect(function() task.wait(0.1) updatePlayers() end)
-Players.PlayerRemoving:Connect(function() task.wait(0.1) updatePlayers() end)
- 
--- Ping (độ trễ mạng, đơn vị ms)
-local DEBUG_PING = false   -- true: in các giá trị ping gốc ra console (F9) để kiểm tra
-local MAX_SANE_PING = 3000 -- giá trị lớn hơn mức này coi là sai, bỏ qua
- 
-local function isSane(v)
-    return type(v) == "number" and v >= 0 and v <= MAX_SANE_PING
-end
- 
-local function getPing()
-    local dataPing, netPing
- 
-    local ok, v = pcall(function()
-        return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
-    end)
-    if ok then dataPing = v end
- 
-    local ok2, p = pcall(function()
-        return LocalPlayer:GetNetworkPing() * 2000
-    end)
-    if ok2 then netPing = p end
- 
-    if DEBUG_PING then
-        print("Data Ping:", dataPing, "| GetNetworkPing x2000:", netPing)
-    end
- 
-    -- Ưu tiên giá trị hợp lý, giá trị phi lý (vd 16621ms) thì bỏ
-    if isSane(dataPing) then return dataPing end
-    if isSane(netPing) then return netPing end
-    return nil
-end
- 
-local function getPingColor(ms)
-    if ms < 80 then
-        return Color3.fromRGB(85, 230, 130)   -- mạng tốt
-    elseif ms < 150 then
-        return Color3.fromRGB(255, 200, 60)   -- tạm được
-    end
-    return Color3.fromRGB(255, 85, 85)        -- lag
-end
- 
-local SAMPLE_COUNT = 5
-local samples = {}
- 
-local function median(list)
-    local copy = table.clone(list)
-    table.sort(copy)
-    local n = #copy
-    if n % 2 == 1 then
-        return copy[(n + 1) // 2]
-    end
-    return (copy[n // 2] + copy[n // 2 + 1]) / 2
-end
- 
-task.spawn(function()
-    while gui.Parent do
-        local ms = getPing()
-        if ms then
-            table.insert(samples, ms)
-            if #samples > SAMPLE_COUNT then table.remove(samples, 1) end
- 
-            local value = median(samples) -- trung vị: loại bỏ các cú giật đột ngột
-            pingLabel.Text = string.format("Ping: %dms", math.floor(value + 0.5))
-            pingLabel.TextColor3 = getPingColor(value)
-        else
-            pingLabel.Text = "Ping: --"
+    -- Tắt hiệu ứng + xóa màu BasePart để giảm draw call
+    local function optimizeObject(obj)
+        if obj:IsA("BasePart") then
+            obj.Color       = Color3.fromRGB(128, 128, 128)
+            obj.Material    = Enum.Material.Plastic
+            obj.Reflectance = 0
+            obj.CastShadow  = false
         end
-        repositionPing()
-        task.wait(0.5)
+ 
+        if obj:IsA("ParticleEmitter")
+        or obj:IsA("Trail")
+        or obj:IsA("Beam")
+        or obj:IsA("Smoke")
+        or obj:IsA("Fire")
+        or obj:IsA("Sparkles") then
+            obj.Enabled = false
+        end
+ 
+        -- Tắt PointLight / SpotLight / SurfaceLight tốn GPU
+        if obj:IsA("PointLight")
+        or obj:IsA("SpotLight")
+        or obj:IsA("SurfaceLight") then
+            obj.Enabled = false
+        end
     end
-end)
  
--- FPS + màu cầu vồng
-local frames = 0
-local last = os.clock()
- 
-RunService.RenderStepped:Connect(function()
-    frames += 1
- 
-    local t = os.clock()
-    fpsLabel.TextColor3 = Color3.fromHSV((t % 4) / 4, 1, 1)
- 
-    if t - last >= 1 then
-        fpsLabel.Text = "FPS: " .. math.floor(frames / (t - last))
-        repositionPing()
-        frames = 0
-        last = t
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        optimizeObject(obj)
     end
-end)
+ 
+    Workspace.DescendantAdded:Connect(function(obj)
+        task.wait()
+        optimizeObject(obj)
+    end)
+ 
+    print("FIX LAG: ON")
+else
+    print("FIX LAG: OFF")
+end
+ 
+ 
+-- ══════════════════════════════════════════════════════════
+--  INFO HUD  (FPS / Ping / Người chơi)
+-- ══════════════════════════════════════════════════════════
+local anyHUD = CONFIG.SHOW_FPS or CONFIG.SHOW_PING or CONFIG.SHOW_PLAYERS
+ 
+if anyHUD then
+ 
+    -- Ưu tiên gethui / CoreGui để HUD đè lên mọi UI khác
+    local function getParent()
+        local ok, ui = pcall(function()
+            return (gethui and gethui()) or game:GetService("CoreGui")
+        end)
+        if ok and ui then return ui end
+        return LocalPlayer:WaitForChild("PlayerGui")
+    end
+ 
+    local parent = getParent()
+    local old    = parent:FindFirstChild("InfoHUD")
+    if old then old:Destroy() end
+ 
+    local gui = Instance.new("ScreenGui")
+    gui.Name              = "InfoHUD"
+    gui.ResetOnSpawn      = false
+    gui.IgnoreGuiInset    = true
+    gui.DisplayOrder      = 2147483647
+    gui.ZIndexBehavior    = Enum.ZIndexBehavior.Sibling
+    pcall(function() gui.OnTopOfCoreBlur = true end)
+    gui.Parent = parent
+ 
+    local function makeLabel(y, size, x)
+        local l = Instance.new("TextLabel")
+        l.BackgroundTransparency = 1
+        l.Position               = UDim2.new(0, x or 16, 0, y)
+        l.Size                   = UDim2.new(0, 320, 0, size + 6)
+        l.Font                   = Enum.Font.FredokaOne
+        l.TextSize               = size
+        l.TextXAlignment         = Enum.TextXAlignment.Left
+        l.TextStrokeColor3       = Color3.new(0, 0, 0)
+        l.TextStrokeTransparency = 0.2
+        l.ZIndex                 = 1000
+        l.Text                   = ""
+        l.Parent                 = gui
+        return l
+    end
+ 
+    local PING_GAP     = 18
+    local fpsLabel     = CONFIG.SHOW_FPS     and makeLabel(14, 44) or nil
+    local pingLabel    = CONFIG.SHOW_PING    and makeLabel(24, 34) or nil
+    local playersLabel = CONFIG.SHOW_PLAYERS and makeLabel(66, 34) or nil
+ 
+    local function repositionPing()
+        if not (pingLabel and fpsLabel) then return end
+        pingLabel.Position = UDim2.new(0, 16 + fpsLabel.TextBounds.X + PING_GAP, 0, 24)
+    end
+ 
+    -- ── Số người chơi ──────────────────────────────────────
+    if CONFIG.SHOW_PLAYERS then
+        local function playerColor(n)
+            if n >= MAX_PLAYERS then return Color3.fromRGB(255, 85,  85)  end
+            if n >= 9           then return Color3.fromRGB(255, 200, 60)  end
+            return Color3.fromRGB(85, 230, 130)
+        end
+ 
+        local function updatePlayers()
+            local n = #Players:GetPlayers()
+            playersLabel.Text       = string.format("Người: %d/%d", n, MAX_PLAYERS)
+            playersLabel.TextColor3 = playerColor(n)
+        end
+ 
+        updatePlayers()
+        Players.PlayerAdded:Connect(function()    task.wait(0.1); updatePlayers() end)
+        Players.PlayerRemoving:Connect(function() task.wait(0.1); updatePlayers() end)
+    end
+ 
+    -- ── Ping ───────────────────────────────────────────────
+    if CONFIG.SHOW_PING then
+        local function isSane(v)
+            return type(v) == "number" and v >= 0 and v <= MAX_SANE_PING
+        end
+ 
+        local function getPing()
+            local dataPing, netPing
+            local ok,  v = pcall(function() return Stats.Network.ServerStatsItem["Data Ping"]:GetValue() end)
+            local ok2, p = pcall(function() return LocalPlayer:GetNetworkPing() * 2000 end)
+            if ok  then dataPing = v end
+            if ok2 then netPing  = p end
+            if DEBUG_PING then print("Data Ping:", dataPing, "| NetPing x2000:", netPing) end
+            if isSane(dataPing) then return dataPing end
+            if isSane(netPing)  then return netPing  end
+            return nil
+        end
+ 
+        local function pingColor(ms)
+            if ms < 80  then return Color3.fromRGB(85, 230, 130) end
+            if ms < 150 then return Color3.fromRGB(255, 200, 60) end
+            return Color3.fromRGB(255, 85, 85)
+        end
+ 
+        local samples = {}
+        local function median(t)
+            local c = table.clone(t); table.sort(c)
+            local n = #c
+            if n % 2 == 1 then return c[(n+1)//2] end
+            return (c[n//2] + c[n//2+1]) / 2
+        end
+ 
+        task.spawn(function()
+            while gui.Parent do
+                local ms = getPing()
+                if ms then
+                    table.insert(samples, ms)
+                    if #samples > PING_SAMPLES then table.remove(samples, 1) end
+                    local val = median(samples)
+                    pingLabel.Text       = string.format("Ping: %dms", math.floor(val + 0.5))
+                    pingLabel.TextColor3 = pingColor(val)
+                else
+                    pingLabel.Text = "Ping: --"
+                end
+                repositionPing()
+                task.wait(0.5)
+            end
+        end)
+    end
+ 
+    -- ── FPS + màu cầu vồng ─────────────────────────────────
+    if CONFIG.SHOW_FPS then
+        local frames, last = 0, os.clock()
+        RunService.RenderStepped:Connect(function()
+            frames += 1
+            local t = os.clock()
+            fpsLabel.TextColor3 = Color3.fromHSV((t % 4) / 4, 1, 1)
+            if t - last >= 1 then
+                fpsLabel.Text = "FPS: " .. math.floor(frames / (t - last))
+                repositionPing()
+                frames = 0
+                last   = t
+            end
+        end)
+    end
+ 
+    print(string.format(
+        "InfoHUD: FPS=%s | Players=%s | Ping=%s",
+        tostring(CONFIG.SHOW_FPS),
+        tostring(CONFIG.SHOW_PLAYERS),
+        tostring(CONFIG.SHOW_PING)
+    ))
+ 
+end -- anyHUD
